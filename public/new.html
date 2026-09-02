@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Set up · Reverse Registry</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 16 16%27%3E%3Crect width=%2716%27 height=%2716%27 rx=%274%27 fill=%27%235b5bd6%27/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<main class="page">
+  <div class="bar">
+    <button class="back" id="back" type="button">Back</button>
+    <span class="steps" id="steps">Step 1 of 4</span>
+  </div>
+
+  <!-- Step 1 -->
+  <section class="card step" data-step="1">
+    <h1>Set up your list</h1>
+    <p class="lede">The people receiving the gifts are locked out the moment this is created. They'll see who gave what after the day.</p>
+    <label class="field"><span>Occasion</span><select id="occasion"></select></label>
+    <label class="field"><span>What you'd call it</span><input id="title" placeholder="e.g. Sam and Alex's wedding" maxlength="120"></label>
+    <label class="field"><span>Date <em>optional</em></span><input id="date" type="date"></label>
+    <label class="field"><span>Who's receiving the gifts</span><input id="recipients" placeholder="Names, separated by commas" maxlength="300"></label>
+    <p class="hint">These people are blocked from the list. If that's you, put yourself here.</p>
+    <p class="err" id="err1"></p>
+    <div class="actions"><button class="btn primary block next" type="button">Continue</button></div>
+  </section>
+
+  <!-- Step 2 -->
+  <section class="card step" data-step="2" hidden>
+    <h1>What you're hoping for</h1>
+    <p class="lede">Guests pick one of these when they post, so the list stays useful instead of random. Add as many as you like.</p>
+    <label class="field"><span>Add a category</span>
+      <select id="catpick">
+        <option value="">Choose one</option>
+        <option>Kitchen</option><option>Home and decor</option><option>Outdoor cooking</option><option>Bedding and bath</option>
+        <option>Entertainment and tech</option><option>Tools and garage</option><option>Garden</option><option>Experiences</option>
+        <option>Books</option><option>Clothing</option><option>Toys and play</option><option>Nursery</option><option>Cash toward a trip</option>
+        <option value="__other">Something else…</option>
+      </select>
+    </label>
+    <div id="otherwrap" hidden>
+      <label class="field"><span>Your own category</span>
+        <div style="display:flex;gap:8px"><input id="other" placeholder="e.g. Camping gear" maxlength="60"><button class="btn secondary" id="addother" type="button">Add</button></div>
+      </label>
+    </div>
+    <div class="tags" id="tags"></div>
+    <p class="hint" id="catcount">Nothing picked yet.</p>
+    <div class="actions"><button class="btn primary block next" type="button">Continue</button></div>
+  </section>
+
+  <!-- Step 3 -->
+  <section class="card step" data-step="3" hidden>
+    <h1>A rough guide</h1>
+    <p class="lede">Guests worry about getting this wrong. A number takes the guessing away.</p>
+    <label class="field"><span>Suggested minimum</span><select id="suggested"></select></label>
+    <p class="hint">A guide, not a rule. Nothing checks it. Anyone who wants to give less can chip in on a group gift instead, and handmade gifts aren't judged on price.</p>
+    <hr class="divider">
+    <h2>Moderators</h2>
+    <p class="hint" style="margin-top:0">You'll pick these from your own page once they've joined with their code. Two people, and both have to agree before anything comes off the list.</p>
+    <div class="actions"><button class="btn primary block next" type="button">Continue</button></div>
+  </section>
+
+  <!-- Step 4 -->
+  <section class="card step" data-step="4" hidden>
+    <h1>Your guest list</h1>
+    <p class="lede">Everyone gets their own code. It's how the site knows who someone is, so nobody ever types a name.</p>
+    <label class="field"><span>Names and emails <em>one per line</em></span>
+      <textarea id="guests" rows="8" placeholder="Jamie Okonkwo, jamie@example.com&#10;Priya Shah, priya@example.com&#10;Uncle Ray"></textarea>
+    </label>
+    <p class="hint">Email is optional. With one, their code is emailed to them. Without, you'll see the code on your page to pass along.</p>
+    <p class="err" id="err4"></p>
+    <div class="actions"><button class="btn primary block" id="create" type="button">Create the list</button></div>
+  </section>
+
+  <!-- Done -->
+  <section class="step" data-step="5" hidden>
+    <div class="card">
+      <p class="eyebrow">You're set</p>
+      <h1>Your codes</h1>
+      <p class="lede">Each recipient's code opens the organiser page and nothing else. Guest codes open the list. Save these somewhere; they aren't shown again outside your page.</p>
+      <label class="field"><span>Link for everyone</span><input id="out-url" readonly></label>
+      <h2 style="margin-top:24px">Recipients</h2>
+      <div class="tablewrap"><table class="codes" id="out-recipients"></table></div>
+      <h2 style="margin-top:24px">Organiser <em class="muted small" style="font-weight:400">if you're not a recipient</em></h2>
+      <p class="mono muted" id="out-organiser" style="font-family:var(--font-mono)"></p>
+      <h2 style="margin-top:24px">Guests</h2>
+      <p class="hint" id="out-mail" style="margin:0 0 10px"></p>
+      <div class="tablewrap"><table class="codes" id="out-guests"></table></div>
+      <div class="actions"><a class="btn primary block" id="out-go" href="/">Go to your page</a></div>
+    </div>
+  </section>
+</main>
+<script src="/wizard.js"></script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reverse Registry</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 16 16%27%3E%3Crect width=%2716%27 height=%2716%27 rx=%274%27 fill=%27%235b5bd6%27/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<!-- This shell is identical for every visitor. It holds no data. Everything
+     below is filled in from the API, which decides per request what this
+     session is allowed to see. -->
+<main class="page" id="app">
+  <div class="bar">
+    <a class="brand" href="/">Reverse Registry</a>
+    <span id="bar-right"></span>
+  </div>
+  <div id="view"></div>
+</main>
+<div class="toast" id="toast"></div>
+<script src="/app.js"></script>
+</body>
+</html>

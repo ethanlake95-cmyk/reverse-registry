@@ -1,0 +1,22 @@
+{
+  "name": "reverse-registry",
+  "version": "0.1.0",
+  "description": "Guests post what they are bringing; recipients are locked out. Server-enforced.",
+  "main": "src/server.js",
+  "directories": {
+    "test": "test"
+  },
+  "scripts": {
+    "start": "node --no-warnings src/server.js",
+    "test": "node --no-warnings test/lockout.test.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.22.2"
+  },
+  "engines": {
+    "node": ">=22.5"
+  }
+}

@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reverse Registry</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 16 16%27%3E%3Crect width=%2716%27 height=%2716%27 rx=%274%27 fill=%27%235b5bd6%27/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<main class="page">
+  <div class="bar"><a class="brand" href="/">Reverse Registry</a></div>
+
+  <section class="hero">
+    <h1>Guests post what they're bringing. The people it's for can't see it.</h1>
+    <p class="lede">A gift list that runs backwards. Everyone invited sees what's already claimed, so nobody turns up with the same thing twice, and the surprise stays a surprise.</p>
+  </section>
+
+  <div class="split">
+    <section class="card">
+      <h2>Have a code?</h2>
+      <form id="enter">
+        <label class="field"><span>Your code <em>from your invitation</em></span>
+          <input name="code" class="code" placeholder="XXXX-XXXX" maxlength="9" autocomplete="off" autocapitalize="characters" spellcheck="false" required>
+        </label>
+        <p class="err" id="err"></p>
+        <button class="btn primary block" type="submit">Continue</button>
+      </form>
+    </section>
+    <section class="card">
+      <h2>Setting one up?</h2>
+      <p class="muted">Takes a few minutes. You'll name the people receiving gifts, pick some categories, and paste in your guest list. Everyone gets their own code.</p>
+      <div class="actions"><a class="btn secondary block" href="/new">Set up a list</a></div>
+    </section>
+  </div>
+</main>
+<script>
+document.getElementById("enter").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const err = document.getElementById("err"); err.textContent = "";
+  const res = await fetch("/api/enter", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: new FormData(ev.target).get("code") }) });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) { err.textContent = data.error || "Something went wrong"; return; }
+  sessionStorage.setItem("rr_fresh", "1");
+  location.href = `/e/${data.slug}/` + (data.role === "guest" ? "list" : "organiser");
+});
+</script>
+</body>
+</html>
