@@ -1,0 +1,19 @@
+# Render Blueprint. In Render: New → Blueprint → pick the repo. Everything below is applied automatically.
+services:
+  - type: web
+    name: reverse-registry
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /
+    envVars:
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: BASE_URL
+        fromService:
+          type: web
+          name: reverse-registry
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: NODE_VERSION
+        value: "22"
