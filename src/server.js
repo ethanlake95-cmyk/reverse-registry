@@ -4,6 +4,7 @@ const crypto = require("node:crypto");
 const { open } = require("./db");
 const auth = require("./auth");
 const time = require("./time");
+const { seedDemo } = require("./seed");
 
 const BASE_URL = process.env.BASE_URL || "http://localhost:3000";
 const OCCASIONS = ["Wedding", "Birthday", "Baby shower", "Anniversary", "Engagement", "Retirement", "Housewarming", "Christmas", "Other"];
@@ -411,7 +412,9 @@ function createApp(db = open()) {
 
 if (require.main === module) {
   const port = Number(process.env.PORT || 3000);
-  createApp().listen(port, () => console.log(`Reverse Registry on http://localhost:${port}`));
+  const db = open();
+  if (process.env.DEMO_SEED === "1" && seedDemo(db)) console.log("Demo event seeded at /e/test-run");
+  createApp(db).listen(port, () => console.log(`Reverse Registry on http://localhost:${port}`));
 }
 
 module.exports = { createApp };
