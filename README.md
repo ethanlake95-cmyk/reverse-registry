@@ -18,6 +18,7 @@ Node 22+ (uses the built-in `node:sqlite`; no native build). Environment variabl
 | `BASE_URL` | Public URL used in emails and on the codes page, e.g. `https://registry.example.com`. |
 | `DB_PATH` | SQLite file. Defaults to `data/registry.db`. |
 | `PORT` | Defaults to 3000. |
+| `DEMO_SEED` | Set to `1` to create a complete test-run event at `/e/test-run` on every start, with fixed codes (see `src/seed.js`). Remove before creating the real event. |
 
 ## How it works
 
@@ -71,7 +72,7 @@ test/lockout.test.js
 
 ## Design
 
-Direction from linear.app / stripe.com / notion.com: near-white ground, one column, Inter with tight tracking, a single indigo accent for primary actions only, hairline borders and one soft shadow. Nothing occasion-specific in the styling; occasion only changes wording (the `COPY` map at the top of `app.js`).
+Nocturne dark palette from the design handoff, applied as tokens in the `:root` block of `app.css` (the earlier light set is kept in a comment at the bottom). Inter, one column, accent-outlined primary buttons, hairline borders, edge-plus-ambient depth. The printed code sheet is black on white. Nothing occasion-specific in the styling; occasion only changes wording (the `COPY` map at the top of `app.js`).
 
 ## Not built (on purpose)
 
