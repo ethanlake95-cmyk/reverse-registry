@@ -26,13 +26,13 @@
         <label class="field"><span>Your code <em>from your invitation</em></span>
           <input name="code" class="code" placeholder="XXXX-XXXX" maxlength="9" autocomplete="off" autocapitalize="characters" spellcheck="false" required>
         </label>
-        <p class="err" id="err"></p>
+        <p class="err" id="err" role="alert"></p>
         <button class="btn primary block" type="submit">Continue</button>
       </form>
     </section>
     <section class="card">
       <h2>Setting one up?</h2>
-      <p class="muted">Takes a few minutes. You'll name the people receiving gifts, pick some categories, and paste in your guest list. Everyone gets their own code.</p>
+      <p class="muted">Takes a few minutes. You'll name the people receiving gifts, set the date, pick some categories, and paste in your guest list. Everyone gets their own code to put on their invitation.</p>
       <div class="actions"><a class="btn secondary block" href="/new">Set up a list</a></div>
     </section>
   </div>
@@ -44,8 +44,7 @@ document.getElementById("enter").addEventListener("submit", async (ev) => {
   const res = await fetch("/api/enter", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: new FormData(ev.target).get("code") }) });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) { err.textContent = data.error || "Something went wrong"; return; }
-  sessionStorage.setItem("rr_fresh", "1");
-  location.href = `/e/${data.slug}/` + (data.role === "guest" ? "list" : "organiser");
+  location.href = `/e/${data.slug}/` + (data.role === "recipient" ? "organiser" : "list");
 });
 </script>
 </body>
