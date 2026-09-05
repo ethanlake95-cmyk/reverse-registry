@@ -413,7 +413,7 @@ function createApp(db = open()) {
 if (require.main === module) {
   const port = Number(process.env.PORT || 3000);
   const db = open();
-  if (process.env.DEMO_SEED === "1" && seedDemo(db)) console.log("Demo event seeded at /e/test-run");
+  if (process.env.DEMO_SEED === "1") { seedDemo(db); console.log("Demo event reset at /e/test-run"); }
   createApp(db).listen(port, () => console.log(`Reverse Registry on http://localhost:${port}`));
 }
 

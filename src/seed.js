@@ -20,7 +20,11 @@ const PEOPLE = [
 ];
 
 function seedDemo(db) {
-  if (db.prepare("SELECT id FROM events WHERE slug = ?").get(SLUG)) return false;
+  // Reset the demo to pristine on every boot, so nothing a tester does to it
+  // sticks. Only ever touches the demo slug; real events are never affected.
+  // (ON DELETE CASCADE clears the demo's gifts, people, flags, lookups, etc.)
+  const existing = db.prepare("SELECT id FROM events WHERE slug = ?").get(SLUG);
+  if (existing) db.prepare("DELETE FROM events WHERE id = ?").run(existing.id);
   db.exec("BEGIN");
   try {
     const { lastInsertRowid: eventId } = db
