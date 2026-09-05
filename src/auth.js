@@ -3,13 +3,15 @@
 //  * The code is the identity. Each person has a unique code. Presenting it
 //    binds an HttpOnly, HMAC-signed session cookie to that person.
 //  * Every API route that returns gift data checks the cookie and the person's
-//    role on the server. A recipient's session can never reach the list.
-//  * Code attempts are rate-limited per IP.
+//    role on the server. A recipient's session can never reach the list
+//    before the unlock time.
+//  * Code attempts are throttled per submitted code (so one guessed-at code
+//    can't be hammered) with a looser cap per client IP.
 
 const crypto = require("node:crypto");
 
 const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toString("hex");
-const SESSION_TTL_SEC = 60 * 60 * 24 * 60; // 60 days: guests come back near the date
+const SESSION_TTL_SEC = 60 * 60 * 24 * 90;
 const COOKIE_NAME = "rr_session";
 
 // ---------- codes ----------
@@ -17,13 +19,11 @@ const COOKIE_NAME = "rr_session";
 const ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // no 0/O, 1/I/L
 
 function generateCode() {
-  const bytes = crypto.randomBytes(8);
   let s = "";
-  for (const b of bytes) s += ALPHABET[b % ALPHABET.length];
+  for (let i = 0; i < 8; i++) s += ALPHABET[crypto.randomInt(ALPHABET.length)]; // unbiased
   return s; // stored/compared without the hyphen; displayed as XXXX-XXXX
 }
 
-// The alphabet has no O, I, L, 0 or 1, so a lookalike typed by mistake is simply a wrong code.
 function cleanCode(code) {
   return String(code || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 }
@@ -78,9 +78,10 @@ function clearSessionCookie(res) {
   res.setHeader("Set-Cookie", `${COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
 }
 
-// Middleware factory. `lookup(personId, eventId)` returns the person row (with
-// role) if that person belongs to that event, else null. `roles` is the set of
-// roles allowed through. Recipients asking for guest-only routes get 403 blocked.
+// Middleware factory. `lookup(personId, eventId, slug)` returns the person row
+// (with role and event) if that person belongs to that event, else null.
+// `roles` lists who may pass. A recipient asking for a list-only route is told
+// they're blocked; any other mismatch is "not your page".
 function requireRole(lookup, roles) {
   return (req, res, next) => {
     const cookies = parseCookies(req.headers.cookie);
@@ -89,9 +90,7 @@ function requireRole(lookup, roles) {
     const person = lookup(t.personId, t.eventId, req.params.slug);
     if (!person) return res.status(401).json({ error: "code required" });
     if (!roles.includes(person.role)) {
-      if (person.role !== "guest" && roles.includes("guest")) {
-        return res.status(403).json({ blocked: true, error: "this list is not for you" });
-      }
+      if (person.role === "recipient") return res.status(403).json({ blocked: true, error: "this list is not for you" });
       return res.status(403).json({ error: "not your page" });
     }
     req.person = person;
@@ -100,33 +99,36 @@ function requireRole(lookup, roles) {
 }
 
 // ---------- rate limiting ----------
+// Two counters. Per submitted code: a stranger can't hammer one code, and a
+// table full of relatives mistyping doesn't burn anyone else's allowance.
+// Per client IP: a single machine can't walk the keyspace slowly.
 
-const attempts = new Map();
-const MAX_ATTEMPTS = 10;
+const buckets = new Map();
 const WINDOW_MS = 15 * 60 * 1000;
+const PER_CODE = 25;
+const PER_IP = 300;
 
-function clientIp(req) {
-  return req.headers["x-forwarded-for"]?.split(",")[0].trim() || req.socket.remoteAddress || "?";
-}
-
-function checkRateLimit(key) {
+function bump(key, limit) {
   const now = Date.now();
-  const rec = attempts.get(key);
-  if (!rec || rec.resetAt < now) {
-    attempts.set(key, { count: 1, resetAt: now + WINDOW_MS });
-    return { ok: true };
-  }
+  let rec = buckets.get(key);
+  if (!rec || rec.resetAt < now) { rec = { count: 0, resetAt: now + WINDOW_MS }; buckets.set(key, rec); }
   rec.count += 1;
-  if (rec.count > MAX_ATTEMPTS) return { ok: false, retryAfterSec: Math.ceil((rec.resetAt - now) / 1000) };
-  return { ok: true };
+  if (buckets.size > 50000) for (const [k, v] of buckets) if (v.resetAt < now) buckets.delete(k);
+  return rec.count <= limit ? null : Math.ceil((rec.resetAt - now) / 1000);
 }
 
-function resetRateLimit(key) {
-  attempts.delete(key);
+// req.ip is the address Render (or any single proxy hop) saw, with trust proxy = 1.
+function checkAttempt(req, code) {
+  const ip = req.ip || req.socket.remoteAddress || "?";
+  const byIp = bump(`ip|${ip}`, PER_IP);
+  if (byIp) return { ok: false, retryAfterSec: byIp, why: "too many tries from this network. Wait a few minutes." };
+  const byCode = code ? bump(`code|${code}`, PER_CODE) : null;
+  if (byCode) return { ok: false, retryAfterSec: byCode, why: "that code has been tried too many times. Wait a few minutes." };
+  return { ok: true };
 }
 
 module.exports = {
   COOKIE_NAME, generateCode, cleanCode, formatCode,
   issueToken, readToken, parseCookies, setSessionCookie, clearSessionCookie,
-  requireRole, clientIp, checkRateLimit, resetRateLimit,
+  requireRole, checkAttempt,
 };

@@ -17,8 +17,9 @@ function open() {
       slug          TEXT NOT NULL UNIQUE,
       occasion      TEXT NOT NULL,
       title         TEXT NOT NULL,
-      date          TEXT,
-      suggested_min TEXT NOT NULL DEFAULT '',   -- a guide, never enforced
+      date          TEXT NOT NULL,               -- ISO YYYY-MM-DD, the event day
+      timezone      TEXT NOT NULL,               -- IANA zone of the venue
+      suggested_min TEXT NOT NULL DEFAULT '',    -- a guide, never enforced
       created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
     );
 
@@ -30,16 +31,14 @@ function open() {
     );
 
     -- Everyone with a code. The code IS the identity.
-    -- role: guest (sees the list) | recipient (organiser page, never the list) | organiser (non-recipient who set it up)
+    -- role: guest (the list) | moderator (the list + the organiser page) | recipient (organiser page; the list only after the unlock)
     CREATE TABLE IF NOT EXISTS people (
       id           INTEGER PRIMARY KEY,
       event_id     INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
       name         TEXT NOT NULL,
-      email        TEXT NOT NULL DEFAULT '',
-      role         TEXT NOT NULL CHECK (role IN ('guest','recipient','organiser')),
+      role         TEXT NOT NULL CHECK (role IN ('guest','moderator','recipient')),
       code         TEXT NOT NULL UNIQUE,
-      is_moderator INTEGER NOT NULL DEFAULT 0,
-      joined_at    TEXT,                       -- first time the code was used
+      joined_at    TEXT,                         -- first time the code was used
       created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
     );
     CREATE INDEX IF NOT EXISTS people_event ON people(event_id);
@@ -53,6 +52,7 @@ function open() {
       item           TEXT NOT NULL,
       link           TEXT NOT NULL DEFAULT '',
       open_to_join   INTEGER NOT NULL DEFAULT 0,
+      proxy_ack      INTEGER NOT NULL DEFAULT 0,               -- giver confirmed a gift posted in their name
       removed_at     TEXT,
       removed_reason TEXT,
       created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
@@ -66,13 +66,23 @@ function open() {
       PRIMARY KEY (gift_id, person_id)
     );
 
-    -- A removal needs two distinct moderators. First vote proposes with a reason, second agrees.
-    CREATE TABLE IF NOT EXISTS removal_votes (
+    -- A moderator's flag on a gift. The first flag shows the poster a banner with the note.
+    -- A second, different moderator agreeing removes the gift. Flags are never shown with a name.
+    CREATE TABLE IF NOT EXISTS flags (
       gift_id    INTEGER NOT NULL REFERENCES gifts(id) ON DELETE CASCADE,
       person_id  INTEGER NOT NULL REFERENCES people(id),
-      reason     TEXT NOT NULL,
+      note       TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
       PRIMARY KEY (gift_id, person_id)
+    );
+
+    -- A recipient looked up one guest's code. Shown on the organiser page.
+    CREATE TABLE IF NOT EXISTS lookups (
+      id           INTEGER PRIMARY KEY,
+      event_id     INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+      person_id    INTEGER NOT NULL REFERENCES people(id),   -- whose code was shown
+      requester_id INTEGER NOT NULL REFERENCES people(id),   -- who asked for it
+      created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
     );
 
     CREATE TABLE IF NOT EXISTS questions (
@@ -99,24 +109,12 @@ function open() {
       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
     );
 
-    -- Private thread: recipients, organiser, and the two moderators.
+    -- Private thread: recipients and moderators.
     CREATE TABLE IF NOT EXISTS thread_messages (
       id         INTEGER PRIMARY KEY,
       event_id   INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
       person_id  INTEGER NOT NULL REFERENCES people(id),
       body       TEXT NOT NULL,
-      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-    );
-
-    -- Every email the system tries to send. Visible on the organiser page.
-    CREATE TABLE IF NOT EXISTS outbox (
-      id         INTEGER PRIMARY KEY,
-      event_id   INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
-      to_email   TEXT NOT NULL,
-      subject    TEXT NOT NULL,
-      body       TEXT NOT NULL,
-      status     TEXT NOT NULL DEFAULT 'queued',  -- queued | sent | failed | no-mailer
-      detail     TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
     );
   `);

@@ -3,17 +3,22 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const { open } = require("./db");
 const auth = require("./auth");
-const { makeMailer } = require("./mailer");
+const time = require("./time");
 
 const BASE_URL = process.env.BASE_URL || "http://localhost:3000";
 const OCCASIONS = ["Wedding", "Birthday", "Baby shower", "Anniversary", "Engagement", "Retirement", "Housewarming", "Christmas", "Other"];
 const SUGGESTED = ["No suggestion", "Under $50", "$50 to $75", "$75 to $100", "$100 to $150", "$150 and up"];
+const TIMEZONES = [
+  { id: "America/New_York", label: "America/New_York — Eastern" },
+  { id: "America/Chicago", label: "America/Chicago — Central" },
+  { id: "America/Denver", label: "America/Denver — Mountain" },
+  { id: "America/Los_Angeles", label: "America/Los_Angeles — Pacific" },
+];
 
 function createApp(db = open()) {
   const app = express();
-  const mailer = makeMailer(db);
   app.disable("x-powered-by");
-  app.set("trust proxy", true);
+  app.set("trust proxy", 1); // exactly one hop (Render's edge); req.ip is what that hop saw
   app.use(express.json({ limit: "64kb" }));
   app.use("/api", (req, res, next) => { res.setHeader("Cache-Control", "no-store"); next(); });
 
@@ -26,37 +31,34 @@ function createApp(db = open()) {
     eventById: db.prepare("SELECT * FROM events WHERE id = ?"),
     categories: db.prepare("SELECT id, name FROM categories WHERE event_id = ? ORDER BY position"),
     categoryById: db.prepare("SELECT id FROM categories WHERE id = ? AND event_id = ?"),
-    peopleByRole: db.prepare("SELECT id, name, email, role, code, is_moderator, joined_at FROM people WHERE event_id = ? AND role = ? ORDER BY name"),
-    peopleAll: db.prepare("SELECT id, name, email, role, code, is_moderator, joined_at FROM people WHERE event_id = ? ORDER BY role, name"),
+    people: db.prepare("SELECT id, name, role, joined_at FROM people WHERE event_id = ? ORDER BY CASE role WHEN 'recipient' THEN 2 ELSE 1 END, name"),
+    peopleByRole: db.prepare("SELECT id, name, role, joined_at FROM people WHERE event_id = ? AND role = ? ORDER BY name"),
     personByCode: db.prepare("SELECT * FROM people WHERE code = ?"),
     personById: db.prepare("SELECT * FROM people WHERE id = ? AND event_id = ?"),
     markJoined: db.prepare("UPDATE people SET joined_at = COALESCE(joined_at, strftime('%Y-%m-%dT%H:%M:%fZ','now')) WHERE id = ?"),
-    joined: db.prepare("SELECT id, name, is_moderator, joined_at FROM people WHERE event_id = ? AND role = 'guest' AND joined_at IS NOT NULL ORDER BY joined_at"),
-    moderatorCount: db.prepare("SELECT COUNT(*) AS n FROM people WHERE event_id = ? AND is_moderator = 1"),
-    moderators: db.prepare("SELECT id FROM people WHERE event_id = ? AND is_moderator = 1"),
-    setModerator: db.prepare("UPDATE people SET is_moderator = 1 WHERE id = ? AND event_id = ? AND role = 'guest' AND joined_at IS NOT NULL"),
+    setRole: db.prepare("UPDATE people SET role = ? WHERE id = ? AND event_id = ?"),
 
-    insertEvent: db.prepare("INSERT INTO events (slug, occasion, title, date, suggested_min) VALUES (?,?,?,?,?)"),
+    insertEvent: db.prepare("INSERT INTO events (slug, occasion, title, date, timezone, suggested_min) VALUES (?,?,?,?,?,?)"),
     insertCategory: db.prepare("INSERT INTO categories (event_id, name, position) VALUES (?,?,?)"),
-    insertPerson: db.prepare("INSERT INTO people (event_id, name, email, role, code) VALUES (?,?,?,?,?)"),
+    insertPerson: db.prepare("INSERT INTO people (event_id, name, role, code) VALUES (?,?,?,?)"),
 
-    giftCount: db.prepare("SELECT COUNT(*) AS n FROM gifts WHERE event_id = ? AND removed_at IS NULL"),
     gifts: db.prepare(`
-      SELECT g.id, g.item, g.link, g.open_to_join, g.removed_at, g.removed_reason, g.created_at,
-             g.giver_id, g.poster_id, c.name AS category,
-             giver.name AS giver_name, poster.name AS poster_name
-      FROM gifts g
-      LEFT JOIN categories c ON c.id = g.category_id
-      JOIN people giver ON giver.id = g.giver_id
-      JOIN people poster ON poster.id = g.poster_id
+      SELECT g.*, c.name AS category, giver.name AS giver_name, poster.name AS poster_name
+      FROM gifts g LEFT JOIN categories c ON c.id = g.category_id
+      JOIN people giver ON giver.id = g.giver_id JOIN people poster ON poster.id = g.poster_id
       WHERE g.event_id = ? ORDER BY g.created_at DESC, g.id DESC`),
     giftById: db.prepare("SELECT * FROM gifts WHERE id = ? AND event_id = ?"),
     insertGift: db.prepare("INSERT INTO gifts (event_id, giver_id, poster_id, category_id, item, link, open_to_join) VALUES (?,?,?,?,?,?,?)"),
-    joinsForEvent: db.prepare("SELECT j.gift_id, j.person_id, p.name FROM gift_joins j JOIN people p ON p.id = j.person_id JOIN gifts g ON g.id = j.gift_id WHERE g.event_id = ? ORDER BY j.created_at"),
+    updateGift: db.prepare("UPDATE gifts SET item = ?, category_id = ?, link = ?, open_to_join = ? WHERE id = ?"),
+    deleteGift: db.prepare("DELETE FROM gifts WHERE id = ?"),
+    ackProxy: db.prepare("UPDATE gifts SET proxy_ack = 1 WHERE id = ?"),
+    joins: db.prepare("SELECT j.gift_id, j.person_id, p.name FROM gift_joins j JOIN people p ON p.id = j.person_id JOIN gifts g ON g.id = j.gift_id WHERE g.event_id = ? ORDER BY j.created_at"),
+    joinCount: db.prepare("SELECT COUNT(*) AS n FROM gift_joins WHERE gift_id = ?"),
     insertJoin: db.prepare("INSERT OR IGNORE INTO gift_joins (gift_id, person_id) VALUES (?,?)"),
-    votesForEvent: db.prepare("SELECT v.gift_id, v.person_id, v.reason, v.created_at FROM removal_votes v JOIN gifts g ON g.id = v.gift_id WHERE g.event_id = ? ORDER BY v.created_at"),
-    votesForGift: db.prepare("SELECT person_id, reason FROM removal_votes WHERE gift_id = ? ORDER BY created_at"),
-    insertVote: db.prepare("INSERT OR IGNORE INTO removal_votes (gift_id, person_id, reason) VALUES (?,?,?)"),
+    flags: db.prepare("SELECT f.gift_id, f.person_id, f.note FROM flags f JOIN gifts g ON g.id = f.gift_id WHERE g.event_id = ? ORDER BY f.created_at"),
+    flagsForGift: db.prepare("SELECT person_id, note FROM flags WHERE gift_id = ? ORDER BY created_at"),
+    insertFlag: db.prepare("INSERT OR IGNORE INTO flags (gift_id, person_id, note) VALUES (?,?,?)"),
+    clearFlags: db.prepare("DELETE FROM flags WHERE gift_id = ?"),
     removeGift: db.prepare("UPDATE gifts SET removed_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), removed_reason = ? WHERE id = ?"),
 
     questions: db.prepare("SELECT q.id, q.body, q.created_at, p.name AS asker FROM questions q JOIN people p ON p.id = q.person_id WHERE q.event_id = ? ORDER BY q.created_at DESC"),
@@ -67,12 +69,13 @@ function createApp(db = open()) {
 
     notices: db.prepare("SELECT id, body, created_at FROM notices WHERE event_id = ? ORDER BY created_at DESC"),
     insertNotice: db.prepare("INSERT INTO notices (event_id, person_id, body) VALUES (?,?,?)"),
-    thread: db.prepare("SELECT t.id, t.body, t.created_at, t.person_id, p.name, p.role, p.is_moderator FROM thread_messages t JOIN people p ON p.id = t.person_id WHERE t.event_id = ? ORDER BY t.created_at"),
+    thread: db.prepare("SELECT t.id, t.body, t.created_at, t.person_id, p.name, p.role FROM thread_messages t JOIN people p ON p.id = t.person_id WHERE t.event_id = ? ORDER BY t.created_at"),
     insertThread: db.prepare("INSERT INTO thread_messages (event_id, person_id, body) VALUES (?,?,?)"),
-    outbox: db.prepare("SELECT id, to_email, subject, body, status, detail, created_at FROM outbox WHERE event_id = ? ORDER BY created_at DESC LIMIT 200"),
+
+    insertLookup: db.prepare("INSERT INTO lookups (event_id, person_id, requester_id) VALUES (?,?,?)"),
+    lookups: db.prepare("SELECT l.created_at, p.name, r.name AS requester, r.id AS requester_id FROM lookups l JOIN people p ON p.id = l.person_id JOIN people r ON r.id = l.requester_id WHERE l.event_id = ? ORDER BY l.created_at DESC LIMIT 3"),
   };
 
-  // The session cookie names a person + event. Confirm both exist and match the URL's event.
   const lookup = (personId, eventId, slug) => {
     const event = q.eventBySlug.get(slug);
     if (!event || event.id !== eventId) return null;
@@ -81,73 +84,75 @@ function createApp(db = open()) {
     person.event = event;
     return person;
   };
-  const guestOnly = auth.requireRole(lookup, ["guest"]);
-  const organiserOnly = auth.requireRole(lookup, ["recipient", "organiser"]);
-  const anyRole = auth.requireRole(lookup, ["guest", "recipient", "organiser"]);
-  const threadMember = [anyRole, (req, res, next) => {
-    if (req.person.role === "guest" && !req.person.is_moderator) return res.status(403).json({ error: "not your page" });
-    next();
-  }];
+  const listRoles = auth.requireRole(lookup, ["guest", "moderator"]);      // may post, join, edit their own
+  const moderatorOnly = auth.requireRole(lookup, ["moderator"]);
+  const recipientOnly = auth.requireRole(lookup, ["recipient"]);
+  const organiserRoles = auth.requireRole(lookup, ["recipient", "moderator"]);
+  const anyRole = auth.requireRole(lookup, ["guest", "moderator", "recipient"]);
 
   const publicEvent = (e) => ({
-    slug: e.slug, occasion: e.occasion, title: e.title, date: e.date,
+    slug: e.slug, occasion: e.occasion, title: e.title, date: e.date, timezone: e.timezone,
     recipients: q.peopleByRole.all(e.id, "recipient").map((p) => p.name),
+    unlockText: time.describeUnlock(e.date, e.timezone),
+    unlockAt: time.unlockAt(e.date, e.timezone).toISOString(),
   });
   const fullEvent = (e) => ({ ...publicEvent(e), suggestedMin: e.suggested_min, categories: q.categories.all(e.id) });
 
-  // ---------- setup wizard ----------
-  app.get("/api/options", (req, res) => res.json({ occasions: OCCASIONS, suggested: SUGGESTED }));
+  // ---------- setup ----------
+  app.get("/api/options", (req, res) => res.json({ occasions: OCCASIONS, suggested: SUGGESTED, timezones: TIMEZONES, unlockHour: time.UNLOCK_HOUR }));
 
-  app.post("/api/events", async (req, res) => {
-    const b = req.body || {};
-    const occasion = OCCASIONS.includes(b.occasion) ? b.occasion : "Other";
-    const title = str(b.title, 120);
-    const date = b.date ? str(b.date, 20) : null;
-    const suggestedMin = SUGGESTED.includes(b.suggestedMin) ? b.suggestedMin : "No suggestion";
-    const recipients = (Array.isArray(b.recipients) ? b.recipients : []).map((r) => str(r, 80)).filter(Boolean);
-    const categories = [...new Set((Array.isArray(b.categories) ? b.categories : []).map((c) => str(c, 60)).filter(Boolean))];
-    const guests = (Array.isArray(b.guests) ? b.guests : [])
-      .map((g) => ({ name: str(g?.name, 80), email: str(g?.email, 200).toLowerCase() }))
-      .filter((g) => g.name);
-    if (!title) return res.status(400).json({ error: "give it a title" });
-    if (recipients.length === 0) return res.status(400).json({ error: "name at least one person receiving the gifts" });
-    if (guests.length === 0) return res.status(400).json({ error: "add at least one guest" });
-    for (const g of guests) if (g.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(g.email)) return res.status(400).json({ error: `that email doesn't look right: ${g.email}` });
-
-    const slug = crypto.randomBytes(6).toString("base64url");
-    const made = { recipients: [], organiser: null, guests: [] };
-    db.exec("BEGIN");
-    try {
-      const { lastInsertRowid: eventId } = q.insertEvent.run(slug, occasion, title, date, suggestedMin);
-      categories.forEach((c, i) => q.insertCategory.run(eventId, c, i));
-      const add = (name, email, role) => {
-        const code = auth.generateCode();
-        q.insertPerson.run(eventId, name, email, role, code);
-        return { name, email, role, code: auth.formatCode(code) };
-      };
-      for (const r of recipients) made.recipients.push(add(r, "", "recipient"));
-      made.organiser = add("Organiser", "", "organiser");
-      for (const g of guests) made.guests.push(add(g.name, g.email, "guest"));
-      db.exec("COMMIT");
-      made.eventId = eventId;
-    } catch (err) {
-      db.exec("ROLLBACK");
-      throw err;
-    }
-
-    // Invitations go out in the background; the organiser page shows the outbox either way.
-    for (const g of made.guests) {
-      mailer.send({
-        eventId: made.eventId, to: g.email,
-        subject: `Your code for ${title}`,
-        body: `Hi ${g.name},\n\nYou're invited to post what you're bringing to ${title}.\n\nYour code: ${g.code}\n\nGo to ${BASE_URL} and enter it. The code is how the site knows it's you, so keep it to yourself.\n\nThis is a one-way email; replies aren't read.`,
-      }).catch(() => {});
-    }
-
-    res.status(201).json({ slug, url: `${BASE_URL}/e/${slug}`, recipients: made.recipients, organiserCode: made.organiser.code, guests: made.guests, mailerConfigured: mailer.configured });
+  // Preview of the unlock line for the wizard, computed server-side from the two fields.
+  app.get("/api/unlock-preview", (req, res) => {
+    const { date, timezone } = req.query;
+    if (!time.isValidDate(date) || !time.isValidZone(timezone)) return res.status(400).json({ error: "bad date or timezone" });
+    res.json({ text: time.describeUnlock(date, timezone) });
   });
 
-  // ---------- public metadata (never gifts, never categories) ----------
+  app.post("/api/events", (req, res) => {
+    try {
+      const b = req.body || {};
+      const occasion = OCCASIONS.includes(b.occasion) ? b.occasion : "Other";
+      const title = str(b.title, 120);
+      const date = str(b.date, 10);
+      const timezone = str(b.timezone, 64);
+      const suggestedMin = SUGGESTED.includes(b.suggestedMin) ? b.suggestedMin : "No suggestion";
+      const recipients = (Array.isArray(b.recipients) ? b.recipients : []).map((r) => str(r, 80)).filter(Boolean);
+      const categories = [...new Set((Array.isArray(b.categories) ? b.categories : []).map((c) => str(c, 60)).filter(Boolean))];
+      const guests = (Array.isArray(b.guests) ? b.guests : []).map((g) => str(typeof g === "string" ? g : g?.name, 80)).filter(Boolean);
+      if (!title) return res.status(400).json({ error: "give it a title" });
+      if (!time.isValidDate(date)) return res.status(400).json({ error: "pick a real date" });
+      if (!time.isValidZone(timezone)) return res.status(400).json({ error: "pick the venue's timezone" });
+      if (recipients.length === 0) return res.status(400).json({ error: "name at least one person receiving the gifts" });
+      if (guests.length === 0) return res.status(400).json({ error: "add at least one guest" });
+
+      const slug = crypto.randomBytes(6).toString("base64url");
+      const made = { recipients: [], guests: [] };
+      db.exec("BEGIN");
+      try {
+        const { lastInsertRowid: eventId } = q.insertEvent.run(slug, occasion, title, date, timezone, suggestedMin);
+        categories.forEach((c, i) => q.insertCategory.run(eventId, c, i));
+        const add = (name, role) => {
+          for (let attempt = 0; attempt < 5; attempt++) {
+            const code = auth.generateCode();
+            try { q.insertPerson.run(eventId, name, role, code); return { name, role, code: auth.formatCode(code) }; }
+            catch (err) { if (!/UNIQUE/.test(String(err.message))) throw err; } // collision: try another code
+          }
+          throw new Error("could not allocate a unique code");
+        };
+        for (const r of recipients) made.recipients.push(add(r, "recipient"));
+        for (const g of guests) made.guests.push(add(g, "guest"));
+        db.exec("COMMIT");
+      } catch (err) { db.exec("ROLLBACK"); throw err; }
+
+      // The one and only time the full set of codes leaves the server.
+      res.status(201).json({ slug, url: `${BASE_URL}/e/${slug}`, title, date, timezone, unlockText: time.describeUnlock(date, timezone), recipients: made.recipients, guests: made.guests });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: "something went wrong creating the event. Nothing was saved; try again." });
+    }
+  });
+
+  // ---------- public metadata (never gifts, never categories, never codes) ----------
   app.get("/api/e/:slug", (req, res) => {
     const e = q.eventBySlug.get(req.params.slug);
     if (!e) return res.status(404).json({ error: "no such event" });
@@ -156,19 +161,13 @@ function createApp(db = open()) {
 
   // ---------- the gate ----------
   app.post("/api/enter", (req, res) => {
-    const rlKey = auth.clientIp(req);
-    const rl = auth.checkRateLimit(rlKey);
-    if (!rl.ok) {
-      res.setHeader("Retry-After", String(rl.retryAfterSec));
-      return res.status(429).json({ error: "too many attempts. Try again in a few minutes." });
-    }
     const code = auth.cleanCode(req.body?.code);
+    const rl = auth.checkAttempt(req, code);
+    if (!rl.ok) { res.setHeader("Retry-After", String(rl.retryAfterSec)); return res.status(429).json({ error: rl.why }); }
     const person = code.length === 8 ? q.personByCode.get(code) : null;
-    if (!person) return res.status(401).json({ error: "that code isn't on the list" });
+    if (!person) return res.status(401).json({ error: "that code wasn't recognised. Check it against your invitation." });
     const event = q.eventById.get(person.event_id);
-    // If a slug was given, the code must belong to that event.
     if (req.body?.slug && req.body.slug !== event.slug) return res.status(401).json({ error: "that code is for a different event" });
-    auth.resetRateLimit(rlKey);
     q.markJoined.run(person.id);
     auth.setSessionCookie(res, req, person.id, event.id);
     res.json({ ok: true, role: person.role, slug: event.slug, name: person.name });
@@ -176,94 +175,155 @@ function createApp(db = open()) {
 
   app.post("/api/leave", (req, res) => { auth.clearSessionCookie(res); res.json({ ok: true }); });
 
-  // Who am I (for page routing). Never returns gifts.
   app.get("/api/e/:slug/me", anyRole, (req, res) => {
     const p = req.person;
-    res.json({ id: p.id, name: p.name, role: p.role, isModerator: !!p.is_moderator, event: publicEvent(p.event) });
+    res.json({ id: p.id, name: p.name, role: p.role, event: publicEvent(p.event), unlocked: time.isUnlocked(p.event) });
   });
 
-  // ---------- guests only: the list ----------
+  // ---------- the list ----------
   function listPayload(person) {
     const e = person.event;
-    const joins = q.joinsForEvent.all(e.id);
-    const votes = person.is_moderator ? q.votesForEvent.all(e.id) : [];
+    const joins = q.joins.all(e.id);
+    const flags = q.flags.all(e.id);
+    const isMod = person.role === "moderator";
     const gifts = q.gifts.all(e.id).map((g) => {
       const js = joins.filter((j) => j.gift_id === g.id);
+      const fl = flags.filter((f) => f.gift_id === g.id);
+      const mine = g.poster_id === person.id || g.giver_id === person.id;
       const out = {
-        id: g.id, item: g.item, link: g.link, category: g.category, openToJoin: !!g.open_to_join, createdAt: g.created_at,
+        id: g.id, item: g.item, link: g.link, category: g.category, categoryId: g.category_id, openToJoin: !!g.open_to_join, createdAt: g.created_at,
         giverName: g.giver_name, posterName: g.poster_name, proxy: g.giver_id !== g.poster_id,
-        mine: g.poster_id === person.id || g.giver_id === person.id,
-        removed: !!g.removed_at, removedReason: g.removed_reason,
+        mine, removed: !!g.removed_at,
         joinedBy: js.map((j) => j.name), youJoined: js.some((j) => j.person_id === person.id),
+        canDelete: mine && !g.removed_at && js.length === 0,
       };
-      if (person.is_moderator && !g.removed_at) {
-        const v = votes.filter((x) => x.gift_id === g.id);
-        out.removal = { proposed: v.length > 0, reason: v[0]?.reason || "", youVoted: v.some((x) => x.person_id === person.id) };
-      }
+      // The poster (or the giver) sees the flag note. Nobody else does, and never who wrote it.
+      if (mine && fl.length && !g.removed_at) out.flag = { note: fl[0].note };
+      if (mine && g.removed_at) out.removedReason = g.removed_reason;
+      // A gift posted in your name by someone else, not yet acknowledged.
+      if (g.giver_id === person.id && g.giver_id !== g.poster_id && !g.proxy_ack && !g.removed_at) out.proxyPostedBy = g.poster_name;
+      if (isMod && !g.removed_at) out.moderation = { flagged: fl.length > 0, youFlagged: fl.some((f) => f.person_id === person.id), note: fl[0]?.note || "" };
       return out;
     });
     const replies = q.replies.all(e.id);
     const questions = q.questions.all(e.id).map((qu) => ({ ...qu, replies: replies.filter((r) => r.question_id === qu.id) }));
     return {
-      me: { id: person.id, name: person.name, isModerator: !!person.is_moderator },
+      me: { id: person.id, name: person.name, role: person.role },
       event: fullEvent(e),
       notices: q.notices.all(e.id),
-      gifts,
-      questions,
-      guests: q.peopleByRole.all(e.id, "guest").filter((p) => p.id !== person.id).map((p) => ({ id: p.id, name: p.name })),
+      gifts, questions,
+      guests: q.people.all(e.id).filter((p) => p.role !== "recipient" && p.id !== person.id).map((p) => ({ id: p.id, name: p.name })),
     };
   }
 
-  app.get("/api/e/:slug/list", guestOnly, (req, res) => res.json(listPayload(req.person)));
+  // What a recipient sees after the unlock: gift and giver only. No flags, reasons, controls or moderators.
+  function unlockedPayload(person) {
+    const e = person.event;
+    const joins = q.joins.all(e.id);
+    return {
+      me: { id: person.id, name: person.name, role: person.role },
+      event: fullEvent(e),
+      unlocked: true,
+      gifts: q.gifts.all(e.id).filter((g) => !g.removed_at).map((g) => ({
+        id: g.id, item: g.item, link: g.link, category: g.category, giverName: g.giver_name,
+        joinedBy: joins.filter((j) => j.gift_id === g.id).map((j) => j.name),
+      })),
+    };
+  }
 
-  app.post("/api/e/:slug/gifts", guestOnly, (req, res) => {
-    const e = req.person.event;
+  app.get("/api/e/:slug/list", anyRole, (req, res) => {
+    if (req.person.role === "recipient") {
+      if (!time.isUnlocked(req.person.event)) return res.status(403).json({ blocked: true, error: "this list is not for you", unlockText: time.describeUnlock(req.person.event.date, req.person.event.timezone) });
+      return res.json(unlockedPayload(req.person));
+    }
+    res.json(listPayload(req.person));
+  });
+
+  function readGiftFields(req, e) {
     const item = str(req.body.item, 200);
-    if (!item) return res.status(400).json({ error: "say what it is" });
     let categoryId = num(req.body.categoryId);
     if (categoryId !== null && !q.categoryById.get(categoryId, e.id)) categoryId = null;
     let link = str(req.body.link, 500);
     if (link && !/^https?:\/\//i.test(link)) link = "https://" + link;
+    return { item, categoryId, link, open: req.body.openToJoin ? 1 : 0 };
+  }
+
+  app.post("/api/e/:slug/gifts", listRoles, (req, res) => {
+    const e = req.person.event;
+    const f = readGiftFields(req, e);
+    if (!f.item) return res.status(400).json({ error: "say what it is" });
     let giverId = req.person.id;
     if (req.body.giverId) {
       const giver = q.personById.get(num(req.body.giverId), e.id);
-      if (!giver || giver.role !== "guest") return res.status(400).json({ error: "pick someone from the guest list" });
+      if (!giver || giver.role === "recipient") return res.status(400).json({ error: "pick someone from the guest list" });
       giverId = giver.id;
     }
-    q.insertGift.run(e.id, giverId, req.person.id, categoryId, item, link, req.body.openToJoin ? 1 : 0);
+    q.insertGift.run(e.id, giverId, req.person.id, f.categoryId, f.item, f.link, f.open);
     res.status(201).json(listPayload(req.person));
   });
 
-  app.post("/api/e/:slug/gifts/:id/join", guestOnly, (req, res) => {
+  // Own gift: the poster, or the person it was posted for.
+  function ownGift(req, res) {
+    const g = q.giftById.get(num(req.params.id), req.person.event.id);
+    if (!g || g.removed_at) { res.status(404).json({ error: "no such gift" }); return null; }
+    if (g.poster_id !== req.person.id && g.giver_id !== req.person.id) { res.status(403).json({ error: "not your gift" }); return null; }
+    return g;
+  }
+
+  app.patch("/api/e/:slug/gifts/:id", listRoles, (req, res) => {
+    const g = ownGift(req, res); if (!g) return;
+    const f = readGiftFields(req, req.person.event);
+    if (!f.item) return res.status(400).json({ error: "say what it is" });
+    q.updateGift.run(f.item, req.body.categoryId === undefined ? g.category_id : f.categoryId, req.body.link === undefined ? g.link : f.link, req.body.openToJoin === undefined ? g.open_to_join : f.open, g.id);
+    q.clearFlags.run(g.id); // editing answers the flag
+    res.json(listPayload(req.person));
+  });
+
+  app.delete("/api/e/:slug/gifts/:id", listRoles, (req, res) => {
+    const g = ownGift(req, res); if (!g) return;
+    if (q.joinCount.get(g.id).n > 0) return res.status(409).json({ error: "someone has joined this gift, so it can be edited but not taken down" });
+    q.deleteGift.run(g.id);
+    res.json(listPayload(req.person));
+  });
+
+  app.post("/api/e/:slug/gifts/:id/acknowledge", listRoles, (req, res) => {
+    const g = q.giftById.get(num(req.params.id), req.person.event.id);
+    if (!g || g.giver_id !== req.person.id) return res.status(404).json({ error: "no such gift" });
+    q.ackProxy.run(g.id);
+    res.json(listPayload(req.person));
+  });
+
+  app.post("/api/e/:slug/gifts/:id/join", listRoles, (req, res) => {
     const g = q.giftById.get(num(req.params.id), req.person.event.id);
     if (!g || g.removed_at) return res.status(404).json({ error: "no such gift" });
     if (!g.open_to_join) return res.status(400).json({ error: "this gift isn't open to join" });
+    if (g.poster_id === req.person.id || g.giver_id === req.person.id) return res.status(400).json({ error: "that's your own gift" });
     q.insertJoin.run(g.id, req.person.id);
     res.json(listPayload(req.person));
   });
 
-  // Moderators: a removal needs two different moderators to agree.
-  app.post("/api/e/:slug/gifts/:id/remove-vote", guestOnly, (req, res) => {
-    if (!req.person.is_moderator) return res.status(403).json({ error: "moderators only" });
+  // Moderators: the first flag shows the poster a banner. A second, different
+  // moderator agreeing removes the gift. Flags never carry a name anywhere.
+  app.post("/api/e/:slug/gifts/:id/flag", moderatorOnly, (req, res) => {
     const g = q.giftById.get(num(req.params.id), req.person.event.id);
     if (!g || g.removed_at) return res.status(404).json({ error: "no such gift" });
-    const existing = q.votesForGift.all(g.id);
-    const reason = str(req.body.reason, 300) || existing[0]?.reason || "";
-    if (!reason) return res.status(400).json({ error: "give a reason" });
-    q.insertVote.run(g.id, req.person.id, reason);
-    const votes = q.votesForGift.all(g.id);
-    if (new Set(votes.map((v) => v.person_id)).size >= 2) q.removeGift.run(votes[0].reason, g.id);
+    const existing = q.flagsForGift.all(g.id);
+    const note = str(req.body.note, 300) || existing[0]?.note || "";
+    if (!note) return res.status(400).json({ error: "write a note for the poster" });
+    q.insertFlag.run(g.id, req.person.id, note);
+    const flags = q.flagsForGift.all(g.id);
+    if (new Set(flags.map((f) => f.person_id)).size >= 2) q.removeGift.run(flags[0].note, g.id);
     res.json(listPayload(req.person));
   });
 
-  app.post("/api/e/:slug/questions", guestOnly, (req, res) => {
+  app.post("/api/e/:slug/questions", listRoles, (req, res) => {
     const body = str(req.body.body, 500);
     if (!body) return res.status(400).json({ error: "type a question" });
     q.insertQuestion.run(req.person.event.id, req.person.id, body);
     res.status(201).json(listPayload(req.person));
   });
 
-  app.post("/api/e/:slug/questions/:id/replies", guestOnly, (req, res) => {
+  app.post("/api/e/:slug/questions/:id/replies", listRoles, (req, res) => {
     const qu = q.questionById.get(num(req.params.id), req.person.event.id);
     if (!qu) return res.status(404).json({ error: "no such question" });
     const body = str(req.body.body, 500);
@@ -272,50 +332,62 @@ function createApp(db = open()) {
     res.status(201).json(listPayload(req.person));
   });
 
-  // ---------- recipients / organiser: their page. Never a gift. ----------
+  // ---------- organiser page: recipients and moderators. Never a gift, never a code. ----------
+  const threadMsg = (m) => ({ id: m.id, body: m.body, createdAt: m.created_at, personId: m.person_id, name: m.name, role: m.role });
   function organiserPayload(person) {
     const e = person.event;
+    const people = q.people.all(e.id);
+    const guests = people.filter((p) => p.role !== "recipient");
     return {
       me: { id: person.id, name: person.name, role: person.role },
       event: fullEvent(e),
-      giftCount: q.giftCount.get(e.id).n,
-      joined: q.joined.all(e.id).map((p) => ({ id: p.id, name: p.name, isModerator: !!p.is_moderator, joinedAt: p.joined_at })),
-      moderatorCount: q.moderatorCount.get(e.id).n,
-      people: q.peopleAll.all(e.id).map((p) => ({ id: p.id, name: p.name, email: p.email, role: p.role, code: auth.formatCode(p.code), joined: !!p.joined_at })),
+      unlocked: time.isUnlocked(e),
+      people: people.map((p) => ({ id: p.id, name: p.name, role: p.role, joinedAt: p.joined_at })),
+      joinedCount: guests.filter((p) => p.joined_at).length,
+      guestCount: guests.length,
+      moderatorCount: guests.filter((p) => p.role === "moderator").length,
       notices: q.notices.all(e.id),
       thread: q.thread.all(e.id).map(threadMsg),
-      outbox: q.outbox.all(e.id),
-      mailerConfigured: mailer.configured,
+      lookups: q.lookups.all(e.id).map((l) => ({ name: l.name, requester: l.requester, requesterId: l.requester_id, at: l.created_at })),
       url: `${BASE_URL}/e/${e.slug}`,
     };
   }
-  const threadMsg = (m) => ({ id: m.id, body: m.body, createdAt: m.created_at, personId: m.person_id, name: m.name, role: m.is_moderator ? "moderator" : m.role });
 
-  app.get("/api/e/:slug/organiser", organiserOnly, (req, res) => res.json(organiserPayload(req.person)));
+  app.get("/api/e/:slug/organiser", organiserRoles, (req, res) => res.json(organiserPayload(req.person)));
 
-  app.post("/api/e/:slug/moderators", organiserOnly, (req, res) => {
+  // Promote a joined guest to moderator, or demote a moderator. Recipients only.
+  app.post("/api/e/:slug/people/:id/role", recipientOnly, (req, res) => {
     const e = req.person.event;
-    if (q.moderatorCount.get(e.id).n >= 2) return res.status(400).json({ error: "there are already two moderators" });
-    const r = q.setModerator.run(num(req.body.personId), e.id);
-    if (r.changes === 0) return res.status(400).json({ error: "pick someone who has joined" });
+    const target = q.personById.get(num(req.params.id), e.id);
+    if (!target || target.role === "recipient") return res.status(400).json({ error: "pick a guest" });
+    const role = req.body.role;
+    if (role === "moderator") {
+      if (!target.joined_at) return res.status(400).json({ error: "they haven't joined yet" });
+      q.setRole.run("moderator", target.id, e.id);
+    } else if (role === "guest") {
+      q.setRole.run("guest", target.id, e.id);
+    } else return res.status(400).json({ error: "role must be moderator or guest" });
     res.json(organiserPayload(req.person));
   });
 
-  app.post("/api/e/:slug/notices", organiserOnly, async (req, res) => {
+  // Reveal one guest's code. Recipients only. Every reveal is recorded with who asked.
+  app.post("/api/e/:slug/people/:id/reveal", recipientOnly, (req, res) => {
     const e = req.person.event;
+    const target = q.personById.get(num(req.params.id), e.id);
+    if (!target || target.role === "recipient") return res.status(400).json({ error: "pick a guest" });
+    q.insertLookup.run(e.id, target.id, req.person.id);
+    res.json({ name: target.name, code: auth.formatCode(target.code), lookups: organiserPayload(req.person).lookups });
+  });
+
+  app.post("/api/e/:slug/notices", recipientOnly, (req, res) => {
     const body = str(req.body.body, 2000);
     if (!body) return res.status(400).json({ error: "type a notice" });
-    q.insertNotice.run(e.id, req.person.id, body);
-    const guests = q.peopleByRole.all(e.id, "guest").filter((g) => g.email);
-    for (const g of guests) {
-      mailer.send({ eventId: e.id, to: g.email, subject: `A notice about ${e.title}`, body: `${body}\n\n—\nPosted on the gift list for ${e.title}. This is a one-way email; replies aren't read.` }).catch(() => {});
-    }
+    q.insertNotice.run(req.person.event.id, req.person.id, body);
     res.status(201).json(organiserPayload(req.person));
   });
 
-  app.get("/api/e/:slug/thread", ...threadMember, (req, res) => res.json({ me: { id: req.person.id }, thread: q.thread.all(req.person.event.id).map(threadMsg) }));
-
-  app.post("/api/e/:slug/thread", ...threadMember, (req, res) => {
+  app.get("/api/e/:slug/thread", organiserRoles, (req, res) => res.json({ me: { id: req.person.id }, thread: q.thread.all(req.person.event.id).map(threadMsg) }));
+  app.post("/api/e/:slug/thread", organiserRoles, (req, res) => {
     const body = str(req.body.body, 2000);
     if (!body) return res.status(400).json({ error: "type a message" });
     q.insertThread.run(req.person.event.id, req.person.id, body);
