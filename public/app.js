@@ -397,6 +397,32 @@
     };
 
     // Code lookup (recipients only). One code visible at a time; changing the select hides it.
+    // Add a guest after setup (recipients only). Shows the new code once, to send with the RSVP reply.
+    let addBlock = null;
+    if (isRecipient) {
+      const nameInput = h("input", { placeholder: "Their name", maxlength: 80 });
+      const addErr = h("p", { class: "err", role: "alert" });
+      const addResult = h("div", { "aria-live": "polite", style: "margin-top:14px" });
+      const submit = async () => {
+        addErr.textContent = "";
+        if (!nameInput.value.trim()) { addErr.textContent = "Type the guest's name."; return; }
+        const r = await ev("/people", { method: "POST", body: { name: nameInput.value } });
+        if (!r.ok) { addErr.textContent = r.data.error || "Something went wrong"; return; }
+        const added = r.data.added; data = r.data;
+        addResult.replaceChildren(h("div", { class: "reveal" },
+          h("div", {}, h("div", { class: "who" }, added.name), h("div", { class: "big" }, added.code),
+            h("div", { class: "small" }, "Send this with their reply. You can look it up again later under “A guest has lost their code”.")),
+          btn("Done", "ghost sm", () => renderOrganiser())));
+        nameInput.value = "";
+      };
+      nameInput.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); submit(); } });
+      addBlock = h("section", { class: "card" },
+        h("h2", {}, "Add a guest"),
+        h("p", { class: "hint", style: "margin:0 0 14px;max-width:40em" }, "As people reply, add them one at a time. Each gets their own code on the spot — send it back with your thank-you for their reply. No need to know everyone up front."),
+        h("div", { class: "control-row" }, h("label", { class: "field" }, h("span", {}, "Name"), nameInput), btn("Add and get a code", "primary", submit)),
+        addErr, addResult);
+    }
+
     let lookupBlock = null;
     if (isRecipient) {
       const sel = h("select", { "aria-label": "Who asked?" }, h("option", { value: "" }, "Choose a guest"), guests.map((p) => h("option", { value: p.id }, p.name)));
@@ -432,6 +458,7 @@
           h("tr", {}, h("th", { style: "width:34%" }, "Name"), h("th", { style: "width:20%" }, "Role"), h("th", { style: "width:22%" }, "Joined"), h("th", {}, isRecipient ? "Moderators" : "")),
           d.people.map((p) => h("tr", {}, h("td", {}, p.name), h("td", {}, roleTag(p)), h("td", { class: "small muted" }, p.joinedAt ? fmtShort(p.joinedAt) : "Not yet"), h("td", {}, actionCell(p)))))),
       ),
+      addBlock,
       lookupBlock,
       h("section", { class: "card" },
         h("h2", {}, "Notices"),
