@@ -32,6 +32,10 @@ function createApp(db = open()) {
     eventById: db.prepare("SELECT * FROM events WHERE id = ?"),
     categories: db.prepare("SELECT id, name FROM categories WHERE event_id = ? ORDER BY position"),
     categoryById: db.prepare("SELECT id FROM categories WHERE id = ? AND event_id = ?"),
+    maxCatPosition: db.prepare("SELECT COALESCE(MAX(position), -1) AS m FROM categories WHERE event_id = ?"),
+    categoryByName: db.prepare("SELECT id FROM categories WHERE event_id = ? AND name = ? COLLATE NOCASE"),
+    deleteCategory: db.prepare("DELETE FROM categories WHERE id = ? AND event_id = ?"),
+    unlinkGiftsFromCategory: db.prepare("UPDATE gifts SET category_id = NULL WHERE category_id = ?"),
     people: db.prepare("SELECT id, name, role, joined_at FROM people WHERE event_id = ? ORDER BY CASE role WHEN 'recipient' THEN 2 ELSE 1 END, name"),
     peopleByRole: db.prepare("SELECT id, name, role, joined_at FROM people WHERE event_id = ? AND role = ? ORDER BY name"),
     personByCode: db.prepare("SELECT * FROM people WHERE code = ?"),
@@ -125,7 +129,7 @@ function createApp(db = open()) {
       if (!time.isValidDate(date)) return res.status(400).json({ error: "pick a real date" });
       if (!time.isValidZone(timezone)) return res.status(400).json({ error: "pick the venue's timezone" });
       if (recipients.length === 0) return res.status(400).json({ error: "name at least one person receiving the gifts" });
-      if (guests.length === 0) return res.status(400).json({ error: "add at least one guest" });
+      // Zero starting guests is allowed: the recipient can add people one at a time as they RSVP.
 
       const slug = crypto.randomBytes(6).toString("base64url");
       const made = { recipients: [], guests: [] };
@@ -380,6 +384,25 @@ function createApp(db = open()) {
     }
     if (!made) return res.status(500).json({ error: "could not allocate a code; try again" });
     res.status(201).json({ added: made, ...organiserPayload(req.person) });
+  });
+
+  // Add or remove a category after setup. Recipients only. Removing one leaves
+  // its gifts in place, just uncategorised — nothing is deleted from the list.
+  app.post("/api/e/:slug/categories", recipientOnly, (req, res) => {
+    const e = req.person.event;
+    const name = str(req.body.name, 60);
+    if (!name) return res.status(400).json({ error: "type a category name" });
+    if (q.categoryByName.get(e.id, name)) return res.status(400).json({ error: "that category is already on the list" });
+    q.insertCategory.run(e.id, name, q.maxCatPosition.get(e.id).m + 1);
+    res.status(201).json(organiserPayload(req.person));
+  });
+
+  app.delete("/api/e/:slug/categories/:id", recipientOnly, (req, res) => {
+    const e = req.person.event;
+    if (!q.categoryById.get(num(req.params.id), e.id)) return res.status(404).json({ error: "no such category" });
+    q.unlinkGiftsFromCategory.run(num(req.params.id)); // keep the gifts, drop the label
+    q.deleteCategory.run(num(req.params.id), e.id);
+    res.json(organiserPayload(req.person));
   });
 
   // Promote a joined guest to moderator, or demote a moderator. Recipients only.
