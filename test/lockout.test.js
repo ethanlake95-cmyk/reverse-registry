@@ -205,6 +205,30 @@ async function main() {
   check("adding with no name is refused", (await req("POST", `/api/e/${slug}/people`, { cookie: ethan, body: { name: "" } })).status === 400);
   check("the added guest's code can be looked up again later", (await req("POST", `/api/e/${slug}/people/${added.json.people.find((p) => p.name === "Late Cousin").id}/reveal`, { cookie: ethan })).json.code === newCode);
 
+  console.log("\n7c. Categories: add and remove after setup");
+  const catAdd = await req("POST", `/api/e/${slug}/categories`, { cookie: ethan, body: { name: "Garden" } });
+  check("recipient adds a category, guests then see it", catAdd.status === 201 && catAdd.json.event.categories.some((c) => c.name === "Garden") && (await req("GET", `/api/e/${slug}/list`, { cookie: jamie })).json.event.categories.some((c) => c.name === "Garden"));
+  check("duplicate category name is refused", (await req("POST", `/api/e/${slug}/categories`, { cookie: ethan, body: { name: "garden" } })).status === 400);
+  check("guest and moderator cannot add or remove categories", [
+    (await req("POST", `/api/e/${slug}/categories`, { cookie: jamie, body: { name: "X" } })).status,
+    (await req("DELETE", `/api/e/${slug}/categories/${catAdd.json.event.categories[0].id}`, { cookie: dana })).status,
+  ].every((s) => s === 403));
+  // Post a gift in "Kitchen", then remove Kitchen; the gift stays, just uncategorised.
+  const kitchenId = catAdd.json.event.categories.find((c) => c.name === "Kitchen").id;
+  const g2 = (await req("POST", `/api/e/${slug}/gifts`, { cookie: jamie, body: { item: "Mixing bowls", categoryId: kitchenId } })).json.gifts.find((g) => g.item === "Mixing bowls");
+  check("gift saved under Kitchen", g2.category === "Kitchen");
+  const catDel = await req("DELETE", `/api/e/${slug}/categories/${kitchenId}`, { cookie: ethan });
+  check("removing a category drops it from the list", catDel.status === 200 && !catDel.json.event.categories.some((c) => c.name === "Kitchen"));
+  const g2after = (await req("GET", `/api/e/${slug}/list`, { cookie: jamie })).json.gifts.find((g) => g.item === "Mixing bowls");
+  check("the gift survives, now uncategorised (not deleted)", g2after && !g2after.category);
+
+  console.log("\n7d. Create an event with zero starting guests");
+  const solo0 = await req("POST", "/api/events", { body: { title: "Just us", date: "2026-11-21", timezone: "America/New_York", recipients: ["Ethan Lake", "Andrea Nunez"], categories: ["Kitchen"], suggestedMin: "No suggestion", guests: [] } });
+  check("event creates with recipients and no guests", solo0.status === 201 && solo0.json.recipients.length === 2 && solo0.json.guests.length === 0);
+  const soloEthan = cookieOf(await enter(solo0.json.recipients[0].code));
+  const addedFirst = await req("POST", `/api/e/${solo0.json.slug}/people`, { cookie: soloEthan, body: { name: "First RSVP" } });
+  check("then a guest can be added to it and their code works", addedFirst.status === 201 && (await enter(addedFirst.json.added.code)).json.role === "guest");
+
   console.log("\n8. After the unlock");
   const past = (await req("POST", "/api/events", { body: { title: "Last week", date: tomorrow(-3), timezone: "America/New_York", recipients: ["Sam"], guests: ["Guest A", "Guest B"] } })).json;
   const ga = cookieOf(await enter(past.guests[0].code)), gb = cookieOf(await enter(past.guests[1].code));
