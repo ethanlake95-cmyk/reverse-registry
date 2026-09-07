@@ -56,6 +56,7 @@ function createApp(db = open()) {
     joins: db.prepare("SELECT j.gift_id, j.person_id, p.name FROM gift_joins j JOIN people p ON p.id = j.person_id JOIN gifts g ON g.id = j.gift_id WHERE g.event_id = ? ORDER BY j.created_at"),
     joinCount: db.prepare("SELECT COUNT(*) AS n FROM gift_joins WHERE gift_id = ?"),
     insertJoin: db.prepare("INSERT OR IGNORE INTO gift_joins (gift_id, person_id) VALUES (?,?)"),
+    deleteJoin: db.prepare("DELETE FROM gift_joins WHERE gift_id = ? AND person_id = ?"),
     flags: db.prepare("SELECT f.gift_id, f.person_id, f.note FROM flags f JOIN gifts g ON g.id = f.gift_id WHERE g.event_id = ? ORDER BY f.created_at"),
     flagsForGift: db.prepare("SELECT person_id, note FROM flags WHERE gift_id = ? ORDER BY created_at"),
     insertFlag: db.prepare("INSERT OR IGNORE INTO flags (gift_id, person_id, note) VALUES (?,?,?)"),
@@ -300,6 +301,15 @@ function createApp(db = open()) {
     if (!g.open_to_join) return res.status(400).json({ error: "this gift isn't open to join" });
     if (g.poster_id === req.person.id || g.giver_id === req.person.id) return res.status(400).json({ error: "that's your own gift" });
     q.insertJoin.run(g.id, req.person.id);
+    res.json(listPayload(req.person));
+  });
+
+  // Leave a gift you joined. Self-serve: anyone can take themselves off a gift
+  // they joined, any time. Covers an accidental tap and a change of heart.
+  app.post("/api/e/:slug/gifts/:id/unjoin", listRoles, (req, res) => {
+    const g = q.giftById.get(num(req.params.id), req.person.event.id);
+    if (!g) return res.status(404).json({ error: "no such gift" });
+    q.deleteJoin.run(g.id, req.person.id);
     res.json(listPayload(req.person));
   });
 
