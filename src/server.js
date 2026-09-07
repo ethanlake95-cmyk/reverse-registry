@@ -44,6 +44,7 @@ function createApp(db = open()) {
     setRole: db.prepare("UPDATE people SET role = ? WHERE id = ? AND event_id = ?"),
 
     insertEvent: db.prepare("INSERT INTO events (slug, occasion, title, date, timezone, suggested_min) VALUES (?,?,?,?,?,?)"),
+    updateSuggested: db.prepare("UPDATE events SET suggested_min = ? WHERE id = ?"),
     insertCategory: db.prepare("INSERT INTO categories (event_id, name, position) VALUES (?,?,?)"),
     insertPerson: db.prepare("INSERT INTO people (event_id, name, role, code) VALUES (?,?,?,?)"),
 
@@ -364,6 +365,7 @@ function createApp(db = open()) {
       notices: q.notices.all(e.id),
       thread: q.thread.all(e.id).map(threadMsg),
       lookups: q.lookups.all(e.id).map((l) => ({ name: l.name, requester: l.requester, requesterId: l.requester_id, at: l.created_at })),
+      suggestedOptions: SUGGESTED,
       url: `${BASE_URL}/e/${e.slug}`,
     };
   }
@@ -384,6 +386,15 @@ function createApp(db = open()) {
     }
     if (!made) return res.status(500).json({ error: "could not allocate a code; try again" });
     res.status(201).json({ added: made, ...organiserPayload(req.person) });
+  });
+
+  // Change the suggested minimum after setup, or clear it. Recipients only.
+  app.post("/api/e/:slug/suggested", recipientOnly, (req, res) => {
+    const value = SUGGESTED.includes(req.body.suggestedMin) ? req.body.suggestedMin : null;
+    if (value === null) return res.status(400).json({ error: "pick one of the offered ranges, or No suggestion" });
+    q.updateSuggested.run(value, req.person.event.id);
+    req.person.event.suggested_min = value;
+    res.json(organiserPayload(req.person));
   });
 
   // Add or remove a category after setup. Recipients only. Removing one leaves
