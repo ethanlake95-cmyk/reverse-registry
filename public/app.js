@@ -447,6 +447,18 @@
         catErr);
     }
 
+    // Change the suggested amount anytime (recipients only).
+    let sugBlock = null;
+    if (isRecipient) {
+      const opts = d.suggestedOptions || ["No suggestion"];
+      const sugSel = h("select", { "aria-label": "Suggested minimum" }, opts.map((o) => h("option", { value: o, selected: o === (e.suggestedMin || "No suggestion") }, o)));
+      sugBlock = h("section", { class: "card" },
+        h("h2", {}, "Suggested amount"),
+        h("p", { class: "hint", style: "margin:0 0 12px;max-width:40em" }, "A soft guide shown to guests before they post. Change it anytime, or set “No suggestion” to show no number at all."),
+        h("div", { class: "control-row" }, h("label", { class: "field" }, h("span", {}, "Show guests"), sugSel),
+          btn("Save", "secondary", async () => { const r = await ev("/suggested", { method: "POST", body: { suggestedMin: sugSel.value } }); if (r.ok) { data = r.data; renderOrganiser(); toast("Saved"); } else toast(r.data.error || "Something went wrong"); })));
+    }
+
     let lookupBlock = null;
     if (isRecipient) {
       const sel = h("select", { "aria-label": "Who asked?" }, h("option", { value: "" }, "Choose a guest"), guests.map((p) => h("option", { value: p.id }, p.name)));
@@ -484,6 +496,7 @@
       ),
       addBlock,
       catBlock,
+      sugBlock,
       lookupBlock,
       h("section", { class: "card" },
         h("h2", {}, "Notices"),
