@@ -123,6 +123,17 @@ async function main() {
   await req("POST", `/api/e/${slug}/gifts/${canary.id}/join`, { cookie: priya });
   const del = await req("DELETE", `/api/e/${slug}/gifts/${canary.id}`, { cookie: jamie });
   check("delete is blocked once someone has joined (409), edit still open", del.status === 409 && (await req("PATCH", `/api/e/${slug}/gifts/${canary.id}`, { cookie: jamie, body: { item: "KitchenAid stand mixer" } })).status === 200);
+  // Priya joined the canary above. She can leave it herself; nobody else's join is touched.
+  const beforeLeave = await req("GET", `/api/e/${slug}/list`, { cookie: priya });
+  check("a joiner sees youJoined true", beforeLeave.json.gifts.find((g) => g.id === canary.id).youJoined === true);
+  const left = await req("POST", `/api/e/${slug}/gifts/${canary.id}/unjoin`, { cookie: priya });
+  const canaryAfter = left.json.gifts.find((g) => g.id === canary.id);
+  check("leaving a gift removes only your own join", left.status === 200 && canaryAfter.youJoined === false && !canaryAfter.joinedBy.includes("Priya Raman"));
+  check("leaving an already-empty gift is harmless (idempotent)", (await req("POST", `/api/e/${slug}/gifts/${canary.id}/unjoin`, { cookie: priya })).status === 200);
+  check("with the last joiner gone, the poster can delete it again", (await req("DELETE", `/api/e/${slug}/gifts/${canary.id}`, { cookie: jamie })).status === 200);
+  // re-post the canary so later sections still have it
+  const recanary = await req("POST", `/api/e/${slug}/gifts`, { cookie: jamie, body: { item: CANARY, openToJoin: true } });
+  Object.assign(canary, recanary.json.gifts.find((g) => g.item === CANARY));
   const solo = await req("POST", `/api/e/${slug}/gifts`, { cookie: priya, body: { item: "Garden bench" } });
   const bench = solo.json.gifts.find((g) => g.item === "Garden bench");
   const gone = await req("DELETE", `/api/e/${slug}/gifts/${bench.id}`, { cookie: priya });
