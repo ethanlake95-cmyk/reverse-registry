@@ -230,6 +230,7 @@
       return h("div", { class: "gift gone" }, kids);
     }
     if (g.mine && g.joinedBy.length) kids.push(h("div", { class: "lock-note" }, `${names(g.joinedBy)} joined this, so it can be edited but not taken down.`));
+    else if (g.openToJoin && g.youJoined) kids.push(h("div", { class: "sub" }, "You're in on this one. Change your mind? Leave it anytime with the button."));
     else if (g.openToJoin && !g.joinedBy.length) kids.push(h("div", { class: "sub" }, "Open for others to chip in."));
     if (data.me.role === "moderator" && g.moderation?.flagged && !g.moderation.youFlagged) kids.push(h("div", { class: "pending" }, "Another moderator flagged this: “", g.moderation.note, "” Agree and it comes off the list."));
     return h("div", { class: "gift" }, kids);
@@ -243,7 +244,9 @@
       c.push(btn("Edit", "ghost sm", () => startEdit(g)));
       if (g.canDelete) c.push(btn("Remove", "ghost sm", () => removeGift(g)));
     } else if (g.openToJoin) {
-      c.push(g.youJoined ? btn("Joined", "secondary sm", null, { disabled: true }) : btn("Join this", "secondary sm", async () => { apply(await ev(`/gifts/${g.id}/join`, { method: "POST" })); toast("You're in"); }));
+      c.push(g.youJoined
+        ? btn("Leave this gift", "ghost sm", async () => { apply(await ev(`/gifts/${g.id}/unjoin`, { method: "POST" })); toast("You're off it"); })
+        : btn("Join this", "secondary sm", async () => { apply(await ev(`/gifts/${g.id}/join`, { method: "POST" })); toast("You're in"); }));
     }
     if (data.me.role === "moderator" && !g.mine && g.moderation) {
       if (g.moderation.youFlagged) c.push(h("span", { class: "tag outline" }, "You flagged this"));
