@@ -423,6 +423,30 @@
         addErr, addResult);
     }
 
+    // Add or remove categories anytime (recipients only). Removing one leaves its gifts on the list, just uncategorised.
+    let catBlock = null;
+    if (isRecipient) {
+      const catInput = h("input", { placeholder: "e.g. Garden", maxlength: 60 });
+      const catErr = h("p", { class: "err", role: "alert" });
+      const addCat = async () => {
+        catErr.textContent = "";
+        if (!catInput.value.trim()) { catErr.textContent = "Type a category name."; return; }
+        const r = await ev("/categories", { method: "POST", body: { name: catInput.value } });
+        if (!r.ok) { catErr.textContent = r.data.error || "Something went wrong"; return; }
+        data = r.data; renderOrganiser();
+      };
+      const removeCat = async (c) => { const r = await ev(`/categories/${c.id}`, { method: "DELETE" }); if (r.ok) { data = r.data; renderOrganiser(); } else toast(r.data.error || "Something went wrong"); };
+      catInput.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addCat(); } });
+      catBlock = h("section", { class: "card" },
+        h("h2", {}, "Categories"),
+        h("p", { class: "hint", style: "margin:0 0 12px;max-width:40em" }, "What guests choose from when they post. Add or remove them anytime — if everyone's piling into one, drop it to steer people elsewhere. Removing a category keeps its gifts on the list, just without the label."),
+        e.categories.length
+          ? h("div", { class: "tags", style: "margin:0 0 14px" }, e.categories.map((c) => h("span", { class: "tag" }, c.name, h("button", { type: "button", "aria-label": `Remove ${c.name}`, onclick: () => removeCat(c) }, "✕"))))
+          : h("p", { class: "muted small", style: "margin:0 0 14px" }, "No categories. Guests can still post; they just won't pick a category."),
+        h("div", { class: "control-row" }, h("label", { class: "field" }, h("span", {}, "Add a category"), catInput), btn("Add", "secondary", addCat)),
+        catErr);
+    }
+
     let lookupBlock = null;
     if (isRecipient) {
       const sel = h("select", { "aria-label": "Who asked?" }, h("option", { value: "" }, "Choose a guest"), guests.map((p) => h("option", { value: p.id }, p.name)));
@@ -459,6 +483,7 @@
           d.people.map((p) => h("tr", {}, h("td", {}, p.name), h("td", {}, roleTag(p)), h("td", { class: "small muted" }, p.joinedAt ? fmtShort(p.joinedAt) : "Not yet"), h("td", {}, actionCell(p)))))),
       ),
       addBlock,
+      catBlock,
       lookupBlock,
       h("section", { class: "card" },
         h("h2", {}, "Notices"),

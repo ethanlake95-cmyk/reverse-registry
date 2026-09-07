@@ -86,7 +86,7 @@
   $("create").addEventListener("click", async () => {
     const err = $("err4"); err.textContent = "";
     const guests = $("guests").value.split("\n").map((l) => l.trim()).filter(Boolean);
-    if (!guests.length) { err.textContent = "Add at least one guest."; return; }
+    // Zero guests is allowed — you can add people one at a time from your page as they reply.
     $("create").disabled = true;
     const res = await fetch("/api/events", {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -103,7 +103,9 @@
 
   function showSheet(d) {
     const ng = d.guests.length, nr = d.recipients.length;
-    $("out-lede").textContent = `These ${ng} guest code${ng === 1 ? "" : "s"} go on your invitations; the last ${nr === 1 ? "one is yours" : nr + " are yours"} to keep. This is the last screen that shows them — the organiser page never will, and there is no email to fall back on. If a guest loses theirs, you can look up that one code on the organiser page.`;
+    $("out-lede").textContent = ng === 0
+      ? `Here ${nr === 1 ? "is your code" : "are your codes"} to keep. No guest codes yet — add people from your page as they reply, and each one gets a code on the spot. This is the only place your own code is shown; the organiser page never shows it.`
+      : `These ${ng} guest code${ng === 1 ? "" : "s"} go on your invitations; the last ${nr === 1 ? "one is yours" : nr + " are yours"} to keep. This is the last screen that shows them — the organiser page never will, and there is no email to fall back on. If a guest loses theirs, you can look up that one code on the organiser page.`;
     $("out-warn").textContent = "You're receiving gifts at this event, so you're seeing codes you could use to read the list. Once you leave this page that stops being possible.";
     const rows = d.guests.map((g) => `<tr><td>${esc(g.name)}</td><td class="mono">${esc(g.code)}</td><td class="small muted">Guest</td></tr>`)
       .concat(d.recipients.map((r, i) => `<tr${i === 0 ? ' class="keep"' : ""}><td>${esc(r.name)}</td><td class="mono">${esc(r.code)}</td><td class="small muted">Yours — keep it</td></tr>`));
