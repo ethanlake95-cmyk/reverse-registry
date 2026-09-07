@@ -193,6 +193,18 @@ async function main() {
   const orgAfter = await req("GET", `/api/e/${slug}/organiser`, { cookie: ethan });
   check("organiser page shows the lookup record but still no code", orgAfter.json.lookups.length === 1 && !leaks(orgAfter));
 
+  console.log("\n7b. Add a guest after setup");
+  const added = await req("POST", `/api/e/${slug}/people`, { cookie: ethan, body: { name: "Late Cousin" } });
+  check("recipient adds a guest and gets one fresh code back, once", added.status === 201 && /^[A-Z2-9]{4}-[A-Z2-9]{4}$/.test(added.json.added.code) && added.json.added.name === "Late Cousin");
+  check("the new guest appears in the roster but the payload still carries no codes", added.json.people.some((p) => p.name === "Late Cousin" && p.role === "guest") && !added.json.people.some((p) => "code" in p));
+  const newCode = added.json.added.code;
+  check("the new code actually works and lands as a guest", (await enter(newCode)).json.role === "guest");
+  await req("POST", "/api/leave", {});
+  check("a moderator cannot add a guest", (await req("POST", `/api/e/${slug}/people`, { cookie: dana, body: { name: "Nope" } })).status === 403);
+  check("a guest cannot add a guest", (await req("POST", `/api/e/${slug}/people`, { cookie: jamie, body: { name: "Nope" } })).status === 403);
+  check("adding with no name is refused", (await req("POST", `/api/e/${slug}/people`, { cookie: ethan, body: { name: "" } })).status === 400);
+  check("the added guest's code can be looked up again later", (await req("POST", `/api/e/${slug}/people/${added.json.people.find((p) => p.name === "Late Cousin").id}/reveal`, { cookie: ethan })).json.code === newCode);
+
   console.log("\n8. After the unlock");
   const past = (await req("POST", "/api/events", { body: { title: "Last week", date: tomorrow(-3), timezone: "America/New_York", recipients: ["Sam"], guests: ["Guest A", "Guest B"] } })).json;
   const ga = cookieOf(await enter(past.guests[0].code)), gb = cookieOf(await enter(past.guests[1].code));
