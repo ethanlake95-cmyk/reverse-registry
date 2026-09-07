@@ -366,6 +366,22 @@ function createApp(db = open()) {
 
   app.get("/api/e/:slug/organiser", organiserRoles, (req, res) => res.json(organiserPayload(req.person)));
 
+  // Add one guest after setup. Recipients only. Returns the new code ONCE, so
+  // it can be sent with the RSVP reply; afterwards it's reachable via reveal.
+  app.post("/api/e/:slug/people", recipientOnly, (req, res) => {
+    const e = req.person.event;
+    const name = str(req.body.name, 80);
+    if (!name) return res.status(400).json({ error: "type the guest's name" });
+    let made = null;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const code = auth.generateCode();
+      try { q.insertPerson.run(e.id, name, "guest", code); made = { name, code: auth.formatCode(code) }; break; }
+      catch (err) { if (!/UNIQUE/.test(String(err.message))) throw err; }
+    }
+    if (!made) return res.status(500).json({ error: "could not allocate a code; try again" });
+    res.status(201).json({ added: made, ...organiserPayload(req.person) });
+  });
+
   // Promote a joined guest to moderator, or demote a moderator. Recipients only.
   app.post("/api/e/:slug/people/:id/role", recipientOnly, (req, res) => {
     const e = req.person.event;
