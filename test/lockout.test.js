@@ -222,6 +222,17 @@ async function main() {
   const g2after = (await req("GET", `/api/e/${slug}/list`, { cookie: jamie })).json.gifts.find((g) => g.item === "Mixing bowls");
   check("the gift survives, now uncategorised (not deleted)", g2after && !g2after.category);
 
+  console.log("\n7c2. Suggested amount is editable after setup");
+  const sug1 = await req("POST", `/api/e/${slug}/suggested`, { cookie: ethan, body: { suggestedMin: "$100 to $150" } });
+  check("recipient changes the suggested amount; guests see it", sug1.status === 200 && sug1.json.event.suggestedMin === "$100 to $150" && (await req("GET", `/api/e/${slug}/list`, { cookie: jamie })).json.event.suggestedMin === "$100 to $150");
+  const sug2 = await req("POST", `/api/e/${slug}/suggested`, { cookie: ethan, body: { suggestedMin: "No suggestion" } });
+  check("recipient can clear it to No suggestion", sug2.json.event.suggestedMin === "No suggestion");
+  check("a made-up range is refused", (await req("POST", `/api/e/${slug}/suggested`, { cookie: ethan, body: { suggestedMin: "$1 to $2" } })).status === 400);
+  check("guests and moderators cannot change the suggested amount", [
+    (await req("POST", `/api/e/${slug}/suggested`, { cookie: jamie, body: { suggestedMin: "Under $50" } })).status,
+    (await req("POST", `/api/e/${slug}/suggested`, { cookie: dana, body: { suggestedMin: "Under $50" } })).status,
+  ].every((s) => s === 403));
+
   console.log("\n7d. Create an event with zero starting guests");
   const solo0 = await req("POST", "/api/events", { body: { title: "Just us", date: "2026-11-21", timezone: "America/New_York", recipients: ["Ethan Lake", "Andrea Nunez"], categories: ["Kitchen"], suggestedMin: "No suggestion", guests: [] } });
   check("event creates with recipients and no guests", solo0.status === 201 && solo0.json.recipients.length === 2 && solo0.json.guests.length === 0);
